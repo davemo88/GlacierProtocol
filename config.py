@@ -1,1 +1,2 @@
-ACCOUNT = 0
+ACCOUNT = '\'\''
+WALLETD = '/home/hg/.bitcoin/'

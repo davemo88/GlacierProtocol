@@ -1,130 +1,91 @@
-#!/usr/bin/env python
+# Copyright (C) 2011 Sam Rushing
+# Copyright (C) 2013-2014 The python-bitcoinlib developers
+#
+# This file is part of python-bitcoinlib.
+#
+# It is subject to the license terms in the LICENSE file found in the top-level
+# directory of this distribution.
+#
+# No part of python-bitcoinlib, including this file, may be copied, modified,
+# propagated, or distributed except according to the terms contained in the
+# LICENSE file.
 
-# from:
-# https://raw.githubusercontent.com/gavinandresen/bitcointools/f377bbe0882669423895c6e91b163d93d4fdf560/base58.py
+"""Base58 encoding and decoding"""
 
-# Copyright (c) 2010 Gavin Andresen
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+import sys
+_bchr = chr
+_bord = ord
+if sys.version > '3':
+    long = int
+    _bchr = lambda x: bytes([x])
+    _bord = lambda x: x
 
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+import binascii
 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+B58_DIGITS = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
-"""encode/decode base58 in the same way that Bitcoin does"""
+class Base58Error(Exception):
+    pass
 
-import math
+class InvalidBase58Error(Base58Error):
+    """Raised on generic invalid base58 data, such as bad characters.
 
-__b58chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-__b58base = len(__b58chars)
-
-
-def b58encode(v):
-    """ encode v, which is a string of bytes, to base58.    
+    Checksum failures raise Base58ChecksumError specifically.
     """
+    pass
 
-    long_value = 0
-    for (i, c) in enumerate(v[::-1]):
-        long_value += ord(c) << (8 * i)  # 2x speedup vs. exponentiation
+def encode(b):
+    """Encode bytes to a base58-encoded string"""
 
-    result = ''
-    while long_value >= __b58base:
-        div, mod = divmod(long_value, __b58base)
-        result = __b58chars[mod] + result
-        long_value = div
-    result = __b58chars[long_value] + result
+    # Convert big-endian bytes to integer
+    n = int('0x0' + binascii.hexlify(b).decode('utf8'), 16)
 
-    # Bitcoin does a little leading-zero-compression:
-    # leading 0-bytes in the input become leading-1s
-    nPad = 0
-    for c in v:
-        if c == '\0':
-            nPad += 1
+    # Divide that integer into base58
+    res = []
+    while n > 0:
+        n, r = divmod(n, 58)
+        res.append(B58_DIGITS[r])
+    res = ''.join(res[::-1])
+
+    # Encode leading zeros as base58 zeros
+    czero = b'\x00'
+    if sys.version > '3':
+        # In Python3 indexing a bytes returns numbers, not characters.
+        czero = 0
+    pad = 0
+    for c in b:
+        if c == czero:
+            pad += 1
         else:
             break
+    return B58_DIGITS[0] * pad + res
 
-    return (__b58chars[0] * nPad) + result
+def decode(s):
+    """Decode a base58-encoding string, returning bytes"""
+    if not s:
+        return b''
 
+    # Convert the string to an integer
+    n = 0
+    for c in s:
+        n *= 58
+        if c not in B58_DIGITS:
+            raise InvalidBase58Error('Character %r is not a valid base58 character' % c)
+        digit = B58_DIGITS.index(c)
+        n += digit
 
-def b58decode(v, length):
-    """ decode v into a string of len bytes
-    """
-    long_value = 0
-    for (i, c) in enumerate(v[::-1]):
-        long_value += __b58chars.find(c) * (__b58base**i)
+    # Convert the integer to bytes
+    h = '%x' % n
+    if len(h) % 2:
+        h = '0' + h
+    res = binascii.unhexlify(h.encode('utf8'))
 
-    result = ''
-    while long_value >= 256:
-        div, mod = divmod(long_value, 256)
-        result = chr(mod) + result
-        long_value = div
-    result = chr(long_value) + result
+    # Add padding back.
+    pad = 0
+    for c in s[:-1]:
+        if c == B58_DIGITS[0]: pad += 1
+        else: break
+    return b'\x00' * pad + res
 
-    nPad = 0
-    for c in v:
-        if c == __b58chars[0]:
-            nPad += 1
-        else:
-            break
-
-    result = chr(0) * nPad + result
-    if length is not None and len(result) != length:
-        return None
-
-    return result
-
-try:
-    import hashlib
-    hashlib.new('ripemd160')
-    have_crypto = True
-except ImportError:
-    have_crypto = False
-
-
-def hash_160(public_key):
-    if not have_crypto:
-        return ''
-    h1 = hashlib.sha256(public_key).digest()
-    r160 = hashlib.new('ripemd160')
-    r160.update(h1)
-    h2 = r160.digest()
-    return h2
-
-
-def public_key_to_bc_address(public_key, version="\x00"):
-    if not have_crypto or public_key is None:
-        return ''
-    h160 = hash_160(public_key)
-    return hash_160_to_bc_address(h160, version=version)
-
-
-def hash_160_to_bc_address(h160, version="\x00"):
-    if not have_crypto:
-        return ''
-    vh160 = version + h160
-    h3 = hashlib.sha256(hashlib.sha256(vh160).digest()).digest()
-    addr = vh160 + h3[0:4]
-    return b58encode(addr)
-
-
-def bc_address_to_hash_160(addr):
-    bytes = b58decode(addr, 25)
-    return bytes[1:21]
-
-if __name__ == '__main__':
-    x = '005cc87f4a3fdfe3a2346b6953267ca867282630d3f9b78e64'.decode('hex_codec')
-    encoded = b58encode(x)
-    print(encoded, '19TbMSWwHvnxAKy12iNm3KdbGfzfaMFViT')
-    print(b58decode(encoded, len(x)).encode('hex_codec'), x.encode('hex_codec'))
