@@ -5,43 +5,51 @@ import base58
 
 import config
 
-def create_signed_tx(multisig_addr, input_tx, redeem_script, *signing_pks):
-    tx = create_raw_transaction(input_tx,amount,receiving_addr) 
+def dump_tx_json(txid):
+## requires internet or blockchain
+    j = json.loads(subprocess.check_output(
+        "bitcoin-cli getrawtransaction {} 1".format(txid),
+        shell=True
+        ).decode())
+    with open('{}.json'.format(txid), 'w') as fp:
+        json.dump(j,fp)
+
+def create_signed_tx(input_txid, vout, hex_script_pubkey, receiving_addr, redeem_script, *signing_pks):
+    '''
+    input_txid: txid for the tx to spend from
+    vout: index of the output of the input tx we want to spend from. see the vout array in the tx json
+    receiving_addr: address to spend to
+    redeem_script: we are spending from a multisig address so we need this
+    *signing_pks: array of private keys to sign tx. order matters?
+    '''
+    tx = create_raw_transaction(input_tx, amount, receiving_addr) 
     for signing_pk in signing_pk:
         tx = sign_raw_transaction(tx)
     return tx
 
-def create_raw_tx(input_tx, amount, receiving_addr):
-    raw_tx = json.loads(subprocess.check_output(
-        "bitcoin-cli getrawtransaction {}".format(input_tx)
-        ).decode())
-    vout = raw_tx['n']
-    input_arg = json.dumps([{'txid':input_tx,'vout':vout}])
-    output_arg = json.dumps({'address':receiving_addr})    
-    unsigned_tx = json.loads(subprocess.check_output(
-        'bitcoin-cli createrawtransaction {} {}'.format(input_arg, output_arg)
-        ).decode())
-    return unsigned_tx
+def create_utx(input_txid, amount, vout, receiving_addr):
+    input_arg = json.dumps([{'txid':input_txid,'vout':vout}])
+    output_arg = json.dumps({receiving_addr:amount})    
+    utx = subprocess.check_output(
+        "bitcoin-cli createrawtransaction \'{}\' \'{}\'".format(input_arg, output_arg),
+        shell=True).decode().strip()
+    return utx
 
-def sign_raw_tx(unsigned_tx, input_tx, redeem_script, signing_pk)
-    raw_tx = json.loads(subprocess.check_output(
-        "bitcoin-cli getrawtransaction {}".format(input_tx)
-        ).decode())
-    vout = raw_tx['n']
-    hex_script_pubkey = raw_tx['scriptPubKey']['hex']
-    input_arg = json.dumps([{'txid':input_tx,
+def sign_raw_tx(tx, input_txid, vout, hex_script_pubkey, redeem_script, signing_pk):
+    input_arg = json.dumps([{'txid':input_txid,
                              'vout':vout,
                              'scriptPubKey':hex_script_pubkey,
                              'redeemScript':redeem_script}])
     pk_arg = json.dumps([signing_pk])
     signed_tx = json.dumps(subprocess.check_output(
-        "bitcoin-cli signrawtransaction {} {} {}".format(unsigned_tx, input_arg, pk_arg)
+        "bitcoin-cli signrawtransaction \'{}\' \'{}\' \'{}\'".format(tx, input_arg, pk_arg),
+        shell=True
         ).decode())
     return signed_tx
 
 def multi_sig_from_rolls(*rolls,length=62):
     for roll in rolls:
-        urand = binassi.hexlify(os.urandom(31)).decode()
+        urand = binascii.hexlify(os.urandom(31)).decode()
         print('roll:',roll)
         print('urand:',urand)
         create_address(roll,urand)
@@ -103,7 +111,7 @@ def get_addr_priv_key_pairs(account=config.ACCOUNT):
            "bitcoin-cli getaddressesbyaccount {}".format(account),
            shell=True).decode())
 
-    pairs=[]
+    pairs={}
     for addr in addresses:
 ## remove newline at end of key
         priv_key = subprocess.check_output(
