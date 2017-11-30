@@ -14,7 +14,7 @@ def dump_tx_json(txid):
     with open('{}.json'.format(txid), 'w') as fp:
         json.dump(j,fp)
 
-def create_signed_tx(input_txid, vout, hex_script_pubkey, receiving_addr, redeem_script, *signing_pks):
+def create_signed_tx(input_txid, amount, vout, hex_script_pubkey, receiving_addr, redeem_script, *signing_pks):
     '''
     input_txid: txid for the tx to spend from
     vout: index of the output of the input tx we want to spend from. see the vout array in the tx json
@@ -22,9 +22,9 @@ def create_signed_tx(input_txid, vout, hex_script_pubkey, receiving_addr, redeem
     redeem_script: we are spending from a multisig address so we need this
     *signing_pks: array of private keys to sign tx. order matters?
     '''
-    tx = create_raw_transaction(input_tx, amount, receiving_addr) 
-    for signing_pk in signing_pk:
-        tx = sign_raw_transaction(tx)
+    tx = create_utx(input_txid, amount, vout, receiving_addr) 
+    for pk in signing_pks:
+        tx = sign_tx(tx, vout, hex_script_pubkey, redeem_script, pk)
     return tx
 
 def create_utx(input_txid, amount, vout, receiving_addr):
@@ -35,7 +35,7 @@ def create_utx(input_txid, amount, vout, receiving_addr):
         shell=True).decode().strip()
     return utx
 
-def sign_raw_tx(tx, input_txid, vout, hex_script_pubkey, redeem_script, signing_pk):
+def sign_tx(tx, input_txid, vout, hex_script_pubkey, redeem_script, signing_pk):
     input_arg = json.dumps([{'txid':input_txid,
                              'vout':vout,
                              'scriptPubKey':hex_script_pubkey,
