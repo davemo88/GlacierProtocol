@@ -14,37 +14,47 @@ def dump_tx_json(txid):
     with open('{}.json'.format(txid), 'w') as fp:
         json.dump(j,fp)
 
-def create_signed_tx(input_txid, amount, vout, hex_script_pubkey, receiving_addr, redeem_script, *signing_pks):
+def get_spend_params(spend_json):
+    spend_info = json.load(open(spend_json,'r'))
+    funding_tx = spend_json['funding_tx'] 
+    funding_txid = funding_tx['txid']
+    vout = spend_info['vout']
+    amount = spend_info['amount']
+    hex_script_pubkey = funding_tx['vout'][vout]['scriptPubKey']['hex']
+    receiving_address = spend_info['receiving_addr']
+
+    return funding_txid, amount, vout, hex_script_pubkey, receiving_address
+
+def create_signed_tx(funding_txid, amount, vout, hex_script_pubkey, receiving_addr, redeem_script, *signing_pks):
     '''
-    input_txid: txid for the tx to spend from
+    funding_txid: txid for the tx to spend from
     vout: index of the output of the input tx we want to spend from. see the vout array in the tx json
     receiving_addr: address to spend to
     redeem_script: we are spending from a multisig address so we need this
     *signing_pks: array of private keys to sign tx. order matters?
     '''
-    tx = create_utx(input_txid, amount, vout, receiving_addr) 
+    tx = create_utx(funding_txid, amount, vout, receiving_addr) 
     for pk in signing_pks:
         tx = sign_tx(tx, vout, hex_script_pubkey, redeem_script, pk)
     return tx
 
-def create_utx(input_txid, amount, vout, receiving_addr):
-    input_arg = json.dumps([{'txid':input_txid,'vout':vout}])
+def create_utx(funding_txid, amount, vout, receiving_addr):
+    input_arg = json.dumps([{'txid':funding_txid,'vout':vout}])
     output_arg = json.dumps({receiving_addr:amount})    
     utx = subprocess.check_output(
         "bitcoin-cli createrawtransaction \'{}\' \'{}\'".format(input_arg, output_arg),
         shell=True).decode().strip()
     return utx
 
-def sign_tx(tx, input_txid, vout, hex_script_pubkey, redeem_script, signing_pk):
-    input_arg = json.dumps([{'txid':input_txid,
+def sign_tx(tx, funding_txid, vout, hex_script_pubkey, redeem_script, signing_pk):
+    input_arg = json.dumps([{'txid':funding_txid,
                              'vout':vout,
                              'scriptPubKey':hex_script_pubkey,
                              'redeemScript':redeem_script}])
     pk_arg = json.dumps([signing_pk])
     signed_tx = json.dumps(subprocess.check_output(
         "bitcoin-cli signrawtransaction \'{}\' \'{}\' \'{}\'".format(tx, input_arg, pk_arg),
-        shell=True
-        ).decode())
+        shell=True).decode())
     return signed_tx
 
 def multi_sig_from_rolls(*rolls,length=62):
@@ -125,7 +135,7 @@ def create_multisig(n, m, *addresses, account_name=''):
     assert m <= n
     account_addresses = json.loads(subprocess.check_output(
            "bitcoin-cli getaddressesbyaccount {}".format(config.ACCOUNT),
-           shell=True))
+           shell=True).decode())
     try:
         for addr in addresses:
             assert addr in account_addresses
@@ -133,7 +143,9 @@ def create_multisig(n, m, *addresses, account_name=''):
         raise AssertionError('address {} is not in your account - look out!')
 
     addresses_str = "\'[\"{}\"]\'".format("\",\"".join(addresses))
-    address = json.loads(subprocess.check_output(
-        "bitcoin-cli createmultisig {} {}".format(m,addresses_str)
-        ).decode())
-    return address
+    multi = json.loads(subprocess.check_output(
+        "bitcoin-cli createmultisig {} {}".format(m,addresses_str),
+        shell=True).decode())
+    multi['constituent_addresses'] = addresses
+    json.dump(multi,open('multi-{}.json'.format(multi['address'])))
+    return multi
