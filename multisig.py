@@ -1,4 +1,4 @@
-import hashlib, argparse, subprocess, json, binascii, os, time
+import hashlib, subprocess, json, binascii, os
 from functools import reduce
 
 import base58
@@ -15,13 +15,24 @@ def dump_tx_json(txid):
         json.dump(j,fp)
 
 def get_spend_params(spend_json):
+    '''
+    spend_json: path json file like:
+    {
+        'funding_tx': json tx used for funding the spend. generate with getrawtransaction or decoderawtransaction
+        'amount': amount to spend. REST WILL BE USED FOR FEE ! ! ! (could also be sent to other addresses)
+        'vout': index of output of funding_tx to spend from
+        'receiving_address': address to spend to
+    }
+    '''
     spend_info = json.load(open(spend_json,'r'))
-    funding_tx = spend_json['funding_tx'] 
-    funding_txid = funding_tx['txid']
+
     vout = spend_info['vout']
     amount = spend_info['amount']
+    receiving_address = spend_info['receiving_address']
+    funding_tx = spend_info['funding_tx'] 
+
+    funding_txid = funding_tx['txid']
     hex_script_pubkey = funding_tx['vout'][vout]['scriptPubKey']['hex']
-    receiving_address = spend_info['receiving_addr']
 
     return funding_txid, amount, vout, hex_script_pubkey, receiving_address
 
@@ -52,14 +63,15 @@ def sign_tx(tx, funding_txid, vout, hex_script_pubkey, redeem_script, signing_pk
                              'scriptPubKey':hex_script_pubkey,
                              'redeemScript':redeem_script}])
     pk_arg = json.dumps([signing_pk])
-    signed_tx = json.dumps(subprocess.check_output(
+    signed_tx = json.loads(subprocess.check_output(
         "bitcoin-cli signrawtransaction \'{}\' \'{}\' \'{}\'".format(tx, input_arg, pk_arg),
         shell=True).decode())
     return signed_tx
 
-def multi_sig_from_rolls(*rolls,length=62):
+def from_rolls(*rolls,length=62):
     for roll in rolls:
-        urand = binascii.hexlify(os.urandom(31)).decode()
+        assert len(roll)==length and len(roll) % 2 == 0
+        urand = binascii.hexlify(os.urandom(int(length/2))).decode()
         print('roll:',roll)
         print('urand:',urand)
         create_address(roll,urand)
@@ -80,19 +92,10 @@ def create_hex_pk(*hex_seeds):
 
     hashes = [int(hashlib.sha256(seed.encode()).hexdigest(),16) for seed in hex_seeds] 
     xor = reduce(lambda x,y: x ^ y, hashes)
-#    print(xor)
-#    try:
-#        assert '{:x}'.format(xor) == "{:0{}x}".format(xor, length)
-#    except AssertionError:
-#        nopadding = '{:x}'.format(xor)
-#        padding = "{:0{}x}".format(xor, length)
-#        print('padding({}):{}'.format(len(padding),padding))
-#        print('nopadding({}):{}'.format(len(nopadding),nopadding))
-#        raise AssertionError('they don\'t match :(')
-## convert to hex
-    hexed = "{:x}".format(xor, length)
-#    assert len(hexed) % 2
-    assert len(hexed) % 2 == 0 
+    hexed = "{:x}".format(xor)
+# need an even length string
+    if len(hexed) % 2:
+        hexed = hexed[:-1]
     return hexed
 #    return "{:0{}x}".format(xor, length)
 
@@ -147,5 +150,7 @@ def create_multisig(n, m, *addresses, account_name=''):
         "bitcoin-cli createmultisig {} {}".format(m,addresses_str),
         shell=True).decode())
     multi['constituent_addresses'] = addresses
+    multi['n'] = n
+    multi['m'] = m
     json.dump(multi,open('multi-{}.json'.format(multi['address'])))
     return multi
