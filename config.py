@@ -1,3 +1,3 @@
 import json
 ACCOUNT = '\'\''
-WALLETD = '/home/hg/.bitcoin/'
+DATADIR = '/home/debian/cryptfs'

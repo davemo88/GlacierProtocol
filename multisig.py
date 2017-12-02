@@ -8,7 +8,7 @@ import config
 def dump_tx_json(txid):
 ## requires internet or blockchain
     j = json.loads(subprocess.check_output(
-        "bitcoin-cli getrawtransaction {} 1".format(txid),
+        "bitcoin-cli -datadir={} getrawtransaction {} 1".format(config.DATADIR, txid),
         shell=True
         ).decode())
     with open('{}.json'.format(txid), 'w') as fp:
@@ -53,7 +53,7 @@ def create_utx(funding_txid, amount, vout, receiving_addr):
     input_arg = json.dumps([{'txid':funding_txid,'vout':vout}])
     output_arg = json.dumps({receiving_addr:amount})    
     utx = subprocess.check_output(
-        "bitcoin-cli createrawtransaction \'{}\' \'{}\'".format(input_arg, output_arg),
+        "bitcoin-cli -datadir={} createrawtransaction \'{}\' \'{}\'".format(config.DATADIR, input_arg, output_arg),
         shell=True).decode().strip()
     return utx
 
@@ -64,7 +64,7 @@ def sign_tx(tx, funding_txid, vout, hex_script_pubkey, redeem_script, signing_pk
                              'redeemScript':redeem_script}])
     pk_arg = json.dumps([signing_pk])
     signed_tx = json.loads(subprocess.check_output(
-        "bitcoin-cli signrawtransaction \'{}\' \'{}\' \'{}\'".format(tx, input_arg, pk_arg),
+        "bitcoin-cli -datadir={} signrawtransaction \'{}\' \'{}\' \'{}\'".format(config.DATADIR, tx, input_arg, pk_arg),
         shell=True).decode())
     return signed_tx
 
@@ -114,21 +114,21 @@ def hex_to_wif_pk(hex_pk):
     return wif
 
 def import_wif_pk(wif_pk, label='\'\'', rescan='false'):
-    print("bitcoin-cli importprivkey {} {} {}".format(wif_pk, label, rescan))
+    print("bitcoin-cli -datadir={} importprivkey {} {} {}".format(config.DATADIR, wif_pk, label, rescan))
     subprocess.call(
-           "bitcoin-cli importprivkey {} {} {}".format(wif_pk, label, rescan),
+           "bitcoin-cli -datadir={} importprivkey {} {} {}".format(config.DATADIR, wif_pk, label, rescan),
            shell=True)
 
 def get_addr_priv_key_pairs(account=config.ACCOUNT):
     addresses = json.loads(subprocess.check_output(
-           "bitcoin-cli getaddressesbyaccount {}".format(account),
+           "bitcoin-cli -datadir={} getaddressesbyaccount {}".format(config.DATADIR, account),
            shell=True).decode())
 
     pairs={}
     for addr in addresses:
 ## remove newline at end of key
         priv_key = subprocess.check_output(
-            "bitcoin-cli dumpprivkey {}".format(addr),
+            "bitcoin-cli -datadir={} dumpprivkey {}".format(config.DATADIR, addr),
             shell=True)[:-1].decode()
         pairs[addr]=priv_key 
     return pairs
@@ -137,7 +137,7 @@ def create_multisig(n, m, *addresses, account_name=''):
     assert len(addresses) == n
     assert m <= n
     account_addresses = json.loads(subprocess.check_output(
-           "bitcoin-cli getaddressesbyaccount {}".format(config.ACCOUNT),
+           "bitcoin-cli -datadir={} getaddressesbyaccount {}".format(config.DATADIR, config.ACCOUNT),
            shell=True).decode())
     try:
         for addr in addresses:
@@ -147,7 +147,7 @@ def create_multisig(n, m, *addresses, account_name=''):
 
     addresses_str = "\'[\"{}\"]\'".format("\",\"".join(addresses))
     multi = json.loads(subprocess.check_output(
-        "bitcoin-cli createmultisig {} {}".format(m,addresses_str),
+        "bitcoin-cli -datadir={} createmultisig {} {}".format(config.DATADIR, m, addresses_str),
         shell=True).decode())
     multi['constituent_addresses'] = addresses
     multi['n'] = n
