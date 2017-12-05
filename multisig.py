@@ -1,143 +1,139 @@
-import hashlib, subprocess, json, binascii, os
+import hashlib, subprocess, json, binascii, os, random, string
 from functools import reduce
 
 import base58
 
 import config
 
-def dump_tx_json(txid):
-## requires internet or blockchain
-    j = json.loads(subprocess.check_output(
-        "bitcoin-cli -datadir={} getrawtransaction {} 1".format(config.DATADIR, txid),
-        shell=True
-        ).decode())
-    with open('{}.json'.format(txid), 'w') as fp:
-        json.dump(j,fp)
+class BitcoinCli:
+    CLIBIN = "bitcoin-cli"
 
-def get_spend_params(spend_json):
-    '''
-    spend_json: path json file like:
-    {
-        'funding_tx': json tx used for funding the spend. generate with getrawtransaction or decoderawtransaction
-        'amount': amount to spend. REST WILL BE USED FOR FEE ! ! ! (could also be sent to other addresses)
-        'vout': index of output of funding_tx to spend from
-        'receiving_address': address to spend to
-    }
-    '''
-    spend_info = json.load(open(spend_json,'r'))
+    def __init__(self, datadir, account=None):
+        self.datadir = datadir
+        self.account = str(random.randint(0,2**20)) if not account else account
+        assert os.path.exists(datadir)
+        assert account or not self.get_addr_priv_key_pairs() 
 
-    vout = spend_info['vout']
-    amount = spend_info['amount']
-    receiving_address = spend_info['receiving_address']
-    funding_tx = spend_info['funding_tx'] 
+    def __call__(self, command, *args):
+        cliargs = ' '.join(map(str,args))
+        cmd = "{} -datadir={} {} {}".format(self.CLIBIN, self.datadir, command, cliargs)
+#        print(command, args, cmd)
+        results = subprocess.check_output(cmd,shell=True).decode().strip()
+        try:
+            results = json.loads(results)
+        except json.decoder.JSONDecodeError:
+            pass
+        return results
 
-    funding_txid = funding_tx['txid']
-    hex_script_pubkey = funding_tx['vout'][vout]['scriptPubKey']['hex']
+    def create_utx(self, funding_tx, amount, vout, receiving_addr):
+        input_arg = self._quote(json.dumps([{'txid':funding_tx['txid'],'vout':vout}]))
+        output_arg = self._quote(json.dumps({receiving_addr:amount}))
+#        utx = subprocess.check_output(
+#            "bitcoin-cli -datadir={} createrawtransaction \'{}\' \'{}\'".format(config.DATADIR, input_arg, output_arg),
+#            shell=True).decode().strip()
+        utx = self('createrawtransaction', input_arg, output_arg)
+        return utx
 
-    return funding_txid, amount, vout, hex_script_pubkey, receiving_address
+    def sign_tx(self, tx, funding_tx, vout, redeem_script, signing_pk):
+        tx = self._quote(tx)
+        input_arg = self._quote(json.dumps([{'txid':funding_txid['txid'],
+                                 'vout':vout,
+                                 'scriptPubKey':funding_tx['vout'][vout]['scriptPubKey']['hex'],
+                                 'redeemScript':redeem_script}]))
+        pk_arg = self._quote(json.dumps([signing_pk]))
+        stx = self('signrawtransaction', tx, input_arg, pk_arg)
+#        signed_tx = json.loads(subprocess.check_output(
+#            "bitcoin-cli -datadir={} signrawtransaction \'{}\' \'{}\' \'{}\'".format(config.DATADIR, tx, input_arg, pk_arg),
+#            shell=True).decode())
+        return signed_tx
 
-def create_utx(funding_txid, amount, vout, receiving_addr):
-    input_arg = json.dumps([{'txid':funding_txid,'vout':vout}])
-    output_arg = json.dumps({receiving_addr:amount})    
-    utx = subprocess.check_output(
-        "bitcoin-cli -datadir={} createrawtransaction \'{}\' \'{}\'".format(config.DATADIR, input_arg, output_arg),
-        shell=True).decode().strip()
-    return utx
-
-def sign_tx(tx, funding_txid, vout, hex_script_pubkey, redeem_script, signing_pk):
-    input_arg = json.dumps([{'txid':funding_txid,
-                             'vout':vout,
-                             'scriptPubKey':hex_script_pubkey,
-                             'redeemScript':redeem_script}])
-    pk_arg = json.dumps([signing_pk])
-    signed_tx = json.loads(subprocess.check_output(
-        "bitcoin-cli -datadir={} signrawtransaction \'{}\' \'{}\' \'{}\'".format(config.DATADIR, tx, input_arg, pk_arg),
-        shell=True).decode())
-    return signed_tx
-
-def from_rolls(*rolls,length=62):
-    for roll in rolls:
-        assert len(roll)==length and len(roll) % 2 == 0
-        urand = binascii.hexlify(os.urandom(int(length/2))).decode()
-        print('roll:',roll)
-        print('urand:',urand)
-        create_address(roll,urand)
-
-def create_address(*hex_seeds):
-    print('creating hx pk')
-    hex_pk = create_hex_pk(*hex_seeds)
-    print('creating wif pk')
-    wif_pk = hex_to_wif_pk(hex_pk)
-    print('importing wif pk')
-    import_wif_pk(wif_pk)
-
-def create_hex_pk(*hex_seeds):
-    length = len(hex_seeds[0])
-    for s in hex_seeds[1:]:
-        if len(s) != length:
-            raise ValueError("seeds must be same length")
-
-    hashes = [int(hashlib.sha256(seed.encode()).hexdigest(),16) for seed in hex_seeds] 
-    xor = reduce(lambda x,y: x ^ y, hashes)
-    hexed = "{:x}".format(xor)
-# need an even length string
-    if len(hexed) % 2:
-        hexed = hexed[:-1]
-    return hexed
-#    return "{:0{}x}".format(xor, length)
-
-def hex_to_wif_pk(hex_pk):
-## should figure out hex vs bytes significance for encoding / hashing
-## prefix 0x80 byte
-    prefixed_key = "80" + hex_pk
-## unhex and hash twice
-    unhexed = binascii.unhexlify(prefixed_key)
-    hashed = hashlib.sha256(hashlib.sha256(unhexed).digest()).hexdigest()
-## append checksum 
-    checksummed_key = prefixed_key + hashed[0:8]
-## unhex again and encode binary data ?
-    wif = base58.encode(binascii.unhexlify(checksummed_key))
+    def import_wif_pk(self, wif_pk, rescan='false'):
+        self("importprivkey", wif_pk, self.account, rescan)
+#        subprocess.call(
+#               "bitcoin-cli -datadir={} importprivkey {} {} {}".format(config.DATADIR, wif_pk, label, rescan),
+#               shell=True)
     
-    return wif
-
-def import_wif_pk(wif_pk, label='\'\'', rescan='false'):
-    print("bitcoin-cli -datadir={} importprivkey {} {} {}".format(config.DATADIR, wif_pk, label, rescan))
-    subprocess.call(
-           "bitcoin-cli -datadir={} importprivkey {} {} {}".format(config.DATADIR, wif_pk, label, rescan),
-           shell=True)
-
-def get_addr_priv_key_pairs(account=config.ACCOUNT):
-    addresses = json.loads(subprocess.check_output(
-           "bitcoin-cli -datadir={} getaddressesbyaccount {}".format(config.DATADIR, account),
-           shell=True).decode())
-
-    pairs={}
-    for addr in addresses:
-## remove newline at end of key
-        priv_key = subprocess.check_output(
-            "bitcoin-cli -datadir={} dumpprivkey {}".format(config.DATADIR, addr),
-            shell=True)[:-1].decode()
-        pairs[addr]=priv_key 
-    return pairs
-
-def create_multisig(n, m, *addresses, account_name=''):
-    assert len(addresses) == n
-    assert m <= n
-    account_addresses = json.loads(subprocess.check_output(
-           "bitcoin-cli -datadir={} getaddressesbyaccount {}".format(config.DATADIR, config.ACCOUNT),
-           shell=True).decode())
-    try:
+    def get_addr_priv_key_pairs(self):
+        addresses = self("getaddressesbyaccount", self.account)
+#        addresses = json.loads(subprocess.check_output(
+#               "bitcoin-cli -datadir={} getaddressesbyaccount {}".format(config.DATADIR, account),
+#               shell=True).decode())
+    
+        pairs={}
         for addr in addresses:
-            assert addr in account_addresses
-    except AssertionError:
-        raise AssertionError('address {} is not in your account - look out!')
+    ## remove newline at end of ke
+            priv_key = self("dumpprivkey", addr)
+#            priv_key = subprocess.check_output(
+#                "bitcoin-cli -datadir={} dumpprivkey {}".format(config.DATADIR, addr),
+#                shell=True)[:-1].decode()
+            pairs[addr] = priv_key 
+        return pairs
+    
+    def create_multisig(self, n, m, *addresses):
+        assert len(addresses) == n
+        assert m <= n
+        account_addresses = self("getaddressesbyaccount", self.account)
+#        account_addresses = json.loads(subprocess.check_output(
+#               "bitcoin-cli -datadir={} getaddressesbyaccount {}".format(config.DATADIR, config.ACCOUNT),
+#               shell=True).decode())
+        try:
+            for addr in addresses:
+                assert addr in account_addresses
+        except AssertionError:
+            raise AssertionError('address {} is not in your account - look out!')
+    
+#        addresses_str = "\'[\"{}\"]\'".format("\",\"".join(addresses))
+        multi = self("createmultisig", m, self._quote(json.dumps(addresses)))
+#        multi = json.loads(subprocess.check_output(
+#            "bitcoin-cli -datadir={} createmultisig {} {}".format(config.DATADIR, m, addresses_str),
+#            shell=True).decode())
+        multi['constituent_addresses'] = addresses
+        multi['n'] = n
+        multi['m'] = m
+        json.dump(multi,open('multi-{}.json'.format(multi['address']),'w'))
+        print('saved {}/multi-{}.json'.format(os.getcwd(), multi['address']))
+        return multi
 
-    addresses_str = "\'[\"{}\"]\'".format("\",\"".join(addresses))
-    multi = json.loads(subprocess.check_output(
-        "bitcoin-cli -datadir={} createmultisig {} {}".format(config.DATADIR, m, addresses_str),
-        shell=True).decode())
-    multi['constituent_addresses'] = addresses
-    multi['n'] = n
-    multi['m'] = m
-    json.dump(multi,open('multi-{}.json'.format(multi['address'])))
-    return multi
+    def create_address(self, *hex_seeds):
+        hex_pk = self._create_hex_pk(*hex_seeds)
+        wif_pk = self._hex_to_wif_pk(hex_pk)
+        self.import_wif_pk(wif_pk)
+
+    def seed_addresses(self, *hex_seeds):
+        for seed in hex_seeds:
+            assert len(seed) % 2 == 0
+            urand = binascii.hexlify(os.urandom(int(len(seed)/2))).decode()
+    #        print('seed:',seed)
+    #        print('urand:',urand)
+            self.create_address(seed,urand)
+
+    def _create_hex_pk(self, *hex_seeds):
+        hashes = [int(hashlib.sha256(seed.encode()).hexdigest(),16) for seed in hex_seeds] 
+        xor = reduce(lambda x,y: x ^ y, hashes)
+        hexed = "{:x}".format(xor)
+        if len(hexed) % 2:
+            hexed = hexed[:-1]
+        return hexed
+    
+    def _hex_to_wif_pk(self, hex_pk):
+    ## should figure out hex vs bytes significance for encoding / hashing
+    ## prefix 0x80 byte
+        prefixed_key = "80" + hex_pk
+    ## unhex and hash twice
+        unhexed = binascii.unhexlify(prefixed_key)
+        hashed = hashlib.sha256(hashlib.sha256(unhexed).digest()).hexdigest()
+    ## append checksum 
+        checksummed_key = prefixed_key + hashed[0:8]
+    ## unhex again and encode binary data ?
+        wif = base58.encode(binascii.unhexlify(checksummed_key))
+        
+        return wif
+    
+    def _quote(self, cliarg):
+        return "'{}'".format(cliarg)
+
+class NamecoinCli(BitcoinCli):
+    CLIBIN = 'namecoin-cli'
+
+class BitcoinCashCli(BitcoinCli):
+    pass
