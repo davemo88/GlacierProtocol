@@ -36,19 +36,6 @@ def get_spend_params(spend_json):
 
     return funding_txid, amount, vout, hex_script_pubkey, receiving_address
 
-def create_signed_tx(funding_txid, amount, vout, hex_script_pubkey, receiving_addr, redeem_script, *signing_pks):
-    '''
-    funding_txid: txid for the tx to spend from
-    vout: index of the output of the input tx we want to spend from. see the vout array in the tx json
-    receiving_addr: address to spend to
-    redeem_script: we are spending from a multisig address so we need this
-    *signing_pks: array of private keys to sign tx. order matters?
-    '''
-    tx = create_utx(funding_txid, amount, vout, receiving_addr) 
-    for pk in signing_pks:
-        tx = sign_tx(tx, vout, hex_script_pubkey, redeem_script, pk)
-    return tx
-
 def create_utx(funding_txid, amount, vout, receiving_addr):
     input_arg = json.dumps([{'txid':funding_txid,'vout':vout}])
     output_arg = json.dumps({receiving_addr:amount})    

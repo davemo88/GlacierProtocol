@@ -1,3 +1,3 @@
-import json
+CURRENCY = 'BTC'
 ACCOUNT = '\'\''
-DATADIR = '/home/debian/cryptfs'
+DATADIR = '~/tmpfs'
