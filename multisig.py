@@ -3,21 +3,23 @@ from functools import reduce
 
 import base58
 
-import config
-
 class BitcoinCli:
     CLIBIN = "bitcoin-cli"
+    WIFPREFIX = "80"
 
-    def __init__(self, datadir, account=None):
+    def __init__(self, datadir, account=None, require_tmpfs=True):
         self.datadir = datadir
         self.account = str(random.randint(0,2**20)) if not account else account
+
         assert os.path.exists(datadir)
+        if require_tmpfs:
+            self._require_tmpfs()
+
         assert account or not self.get_addr_priv_key_pairs() 
 
     def __call__(self, command, *args):
         cliargs = ' '.join(map(str,args))
         cmd = "{} -datadir={} {} {}".format(self.CLIBIN, self.datadir, command, cliargs)
-#        print(command, args, cmd)
         results = subprocess.check_output(cmd,shell=True).decode().strip()
         try:
             results = json.loads(results)
@@ -28,9 +30,6 @@ class BitcoinCli:
     def create_utx(self, funding_tx, amount, vout, receiving_addr):
         input_arg = self._quote(json.dumps([{'txid':funding_tx['txid'],'vout':vout}]))
         output_arg = self._quote(json.dumps({receiving_addr:amount}))
-#        utx = subprocess.check_output(
-#            "bitcoin-cli -datadir={} createrawtransaction \'{}\' \'{}\'".format(config.DATADIR, input_arg, output_arg),
-#            shell=True).decode().strip()
         utx = self('createrawtransaction', input_arg, output_arg)
         return utx
 
@@ -42,30 +41,17 @@ class BitcoinCli:
                                  'redeemScript':redeem_script}]))
         pk_arg = self._quote(json.dumps([signing_pk]))
         stx = self('signrawtransaction', tx, input_arg, pk_arg)
-#        signed_tx = json.loads(subprocess.check_output(
-#            "bitcoin-cli -datadir={} signrawtransaction \'{}\' \'{}\' \'{}\'".format(config.DATADIR, tx, input_arg, pk_arg),
-#            shell=True).decode())
         return signed_tx
 
     def import_wif_pk(self, wif_pk, rescan='false'):
         self("importprivkey", wif_pk, self.account, rescan)
-#        subprocess.call(
-#               "bitcoin-cli -datadir={} importprivkey {} {} {}".format(config.DATADIR, wif_pk, label, rescan),
-#               shell=True)
     
     def get_addr_priv_key_pairs(self):
         addresses = self("getaddressesbyaccount", self.account)
-#        addresses = json.loads(subprocess.check_output(
-#               "bitcoin-cli -datadir={} getaddressesbyaccount {}".format(config.DATADIR, account),
-#               shell=True).decode())
     
         pairs={}
         for addr in addresses:
-    ## remove newline at end of ke
             priv_key = self("dumpprivkey", addr)
-#            priv_key = subprocess.check_output(
-#                "bitcoin-cli -datadir={} dumpprivkey {}".format(config.DATADIR, addr),
-#                shell=True)[:-1].decode()
             pairs[addr] = priv_key 
         return pairs
     
@@ -73,20 +59,13 @@ class BitcoinCli:
         assert len(addresses) == n
         assert m <= n
         account_addresses = self("getaddressesbyaccount", self.account)
-#        account_addresses = json.loads(subprocess.check_output(
-#               "bitcoin-cli -datadir={} getaddressesbyaccount {}".format(config.DATADIR, config.ACCOUNT),
-#               shell=True).decode())
         try:
             for addr in addresses:
                 assert addr in account_addresses
         except AssertionError:
             raise AssertionError('address {} is not in your account - look out!')
     
-#        addresses_str = "\'[\"{}\"]\'".format("\",\"".join(addresses))
         multi = self("createmultisig", m, self._quote(json.dumps(addresses)))
-#        multi = json.loads(subprocess.check_output(
-#            "bitcoin-cli -datadir={} createmultisig {} {}".format(config.DATADIR, m, addresses_str),
-#            shell=True).decode())
         multi['constituent_addresses'] = addresses
         multi['n'] = n
         multi['m'] = m
@@ -103,8 +82,6 @@ class BitcoinCli:
         for seed in hex_seeds:
             assert len(seed) % 2 == 0
             urand = binascii.hexlify(os.urandom(int(len(seed)/2))).decode()
-    #        print('seed:',seed)
-    #        print('urand:',urand)
             self.create_address(seed,urand)
 
     def _create_hex_pk(self, *hex_seeds):
@@ -116,15 +93,14 @@ class BitcoinCli:
         return hexed
     
     def _hex_to_wif_pk(self, hex_pk):
-    ## should figure out hex vs bytes significance for encoding / hashing
-    ## prefix 0x80 byte
-        prefixed_key = "80" + hex_pk
-    ## unhex and hash twice
+## prefix 0x80 byte
+        prefixed_key = self.WIFPREFIX + hex_pk
+## unhex and hash twice
         unhexed = binascii.unhexlify(prefixed_key)
         hashed = hashlib.sha256(hashlib.sha256(unhexed).digest()).hexdigest()
-    ## append checksum 
+## append checksum 
         checksummed_key = prefixed_key + hashed[0:8]
-    ## unhex again and encode binary data ?
+## unhex again and encode binary data ?
         wif = base58.encode(binascii.unhexlify(checksummed_key))
         
         return wif
@@ -132,8 +108,17 @@ class BitcoinCli:
     def _quote(self, cliarg):
         return "'{}'".format(cliarg)
 
+    def _require_tmpfs(self):
+        if not self
+        df_out = subprocess.check_output("df -T {} ".format(self.datadir),shell=True)
+## headers and one row
+        assert len(df_out) == 2
+        fs_type = df_out[-1].split()[1]
+        assert fs_type == 'tmpfs'
+
 class NamecoinCli(BitcoinCli):
     CLIBIN = 'namecoin-cli'
+    WIFPREFIX = 'B4'
 
 class BitcoinCashCli(BitcoinCli):
     pass
