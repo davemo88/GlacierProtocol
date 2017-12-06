@@ -102,18 +102,27 @@ class BitcoinCli:
         checksummed_key = prefixed_key + hashed[0:8]
 ## unhex again and encode binary data ?
         wif = base58.encode(binascii.unhexlify(checksummed_key))
+        assert self._wif_to_hex_pk(wif) == hex_pk
         
         return wif
+
+    def _wif_to_hex_pk(self, wif_pk):
+        checksummed_key = base58.decode(wif_pk)
+## drop prefix byte and appended 4-byte checksum
+        hex_key = checksummed_key[2:-8]
+        assert self._hex_to_wif_pk(hex_pk) == wif_pk
+        
+        return hex_key
     
     def _quote(self, cliarg):
         return "'{}'".format(cliarg)
 
     def _require_tmpfs(self):
-        if not self
-        df_out = subprocess.check_output("df -T {} ".format(self.datadir),shell=True)
+        df_out = subprocess.check_output("df -T {} ".format(self.datadir),shell=True).decode().strip().splitlines()
 ## headers and one row
         assert len(df_out) == 2
-        fs_type = df_out[-1].split()[1]
+## filesystem type is second column
+        fs_type = df_out[-1].split()[1].strip()
         assert fs_type == 'tmpfs'
 
 class NamecoinCli(BitcoinCli):
