@@ -23,7 +23,7 @@ class BitcoinCli:
         results = subprocess.check_output(cmd,shell=True).decode().strip()
         try:
             results = json.loads(results)
-        except json.decoder.JSONDecodeError:
+        except ValueError:
             pass
         return results
 
@@ -33,15 +33,17 @@ class BitcoinCli:
         utx = self('createrawtransaction', input_arg, output_arg)
         return utx
 
-    def sign_tx(self, tx, funding_tx, vout, redeem_script, signing_pk):
+    def sign_tx(self, tx, funding_tx, vout, amount, redeem_script, signing_pk):
         tx = self._quote(tx)
-        input_arg = self._quote(json.dumps([{'txid':funding_txid['txid'],
+        input_arg = self._quote(json.dumps([{
+                                 'txid':funding_tx['txid'],
                                  'vout':vout,
+                                 'amount':amount,
                                  'scriptPubKey':funding_tx['vout'][vout]['scriptPubKey']['hex'],
                                  'redeemScript':redeem_script}]))
         pk_arg = self._quote(json.dumps([signing_pk]))
         stx = self('signrawtransaction', tx, input_arg, pk_arg)
-        return signed_tx
+        return stx
 
     def import_wif_pk(self, wif_pk, rescan='false'):
         self("importprivkey", wif_pk, self.account, rescan)
@@ -91,6 +93,13 @@ class BitcoinCli:
         if len(hexed) % 2:
             hexed = hexed[:-1]
         return hexed
+
+    def _checksum(self, prefixed_key):
+## unhex and hash twice
+        unhexed = binascii.unhexlify(prefixed_key)
+        hashed = hashlib.sha256(hashlib.sha256(unhexed).digest()).hexdigest()
+        checksum = hashed[:8]
+        return checksum
     
     def _hex_to_wif_pk(self, hex_pk):
 ## prefix 0x80 byte
@@ -102,17 +111,15 @@ class BitcoinCli:
         checksummed_key = prefixed_key + hashed[0:8]
 ## unhex again and encode binary data ?
         wif = base58.encode(binascii.unhexlify(checksummed_key))
-        assert self._wif_to_hex_pk(wif) == hex_pk
         
         return wif
 
     def _wif_to_hex_pk(self, wif_pk):
-        checksummed_key = base58.decode(wif_pk)
+        checksummed_pk = binascii.hexlify(base58.decode(wif_pk)).decode()
 ## drop prefix byte and appended 4-byte checksum
-        hex_key = checksummed_key[2:-8]
-        assert self._hex_to_wif_pk(hex_pk) == wif_pk
+        hex_pk = checksummed_pk[2:-8]
         
-        return hex_key
+        return hex_pk
     
     def _quote(self, cliarg):
         return "'{}'".format(cliarg)
