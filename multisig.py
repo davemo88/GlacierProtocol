@@ -1,4 +1,4 @@
-import hashlib, subprocess, json, binascii, os, random, string
+import hashlib, subprocess, json, binascii, os, random, string, decimal
 from functools import reduce
 
 import base58
@@ -30,13 +30,25 @@ class BitcoinCli:
         return results
 
     def create_tx(self, input_txs, vouts, address_amounts):
+        '''
+        inputs_txs: list of decoded txs
+        vouts: dict {txid: [vout indexes]}
+        address_amount: dict of address: amount
+        '''
         inputs = self._tx_inputs(inputs_txs, vouts)
         outputs = self._tx_outputs(address_amounts)
+        _, __, ___ = self._implicit_fee(input_txs, vouts, address_amounts)
+        print()
         return self("createrawtransaction", inputs, outputs)
 
-    def sign_tx(self, tx, input_txs, vouts, signing_pks, redeem_scripts):
-# does this need to be quoted?
-        tx = self._quote(tx)
+    def sign_tx(self, tx, input_txs, vouts, signing_pks, redeem_scripts={}):
+        '''
+        tx: hex tx
+        inputs_txs: list of decoded txs
+        vouts: dict {txid: [vout indexes]}
+        signing_pks: list of wif pks
+        redeem_scripts: dict {txid: {vout: redeem_script}}
+        '''
         inputs = self._signing_inputs(input_txs, vouts, redeem_scripts)
         pks = self._quote(json.dumps(signing_pks))
         return self("signrawtransaction", tx, inputs, pks)
@@ -78,9 +90,9 @@ class BitcoinCli:
             urand = binascii.hexlify(os.urandom(int(len(seed)/2))).decode()
             self.create_address(seed,urand)
 
-    def _tx_inputs(self, inputs_txs, vouts):
+    def _tx_inputs(self, input_txs, vouts):
         tx_inputs = [
-            {'txid':itx['txid'], 'vout': vout for vout in vouts[itx['txid']] for itx in input_txs} 
+            {'txid':itx['txid'], 'vout': vout} for vout in vouts[itx['txid']] for itx in input_txs 
                 ]
 
         return self._quote(json.dumps(tx_inputs))
@@ -95,7 +107,7 @@ class BitcoinCli:
                 _input = {
                     'txid': itx['txid'],
                     'vout': vout,
-                    'scriptPubKey': itx['vout'][vout]['scriptPubKey']['hex']
+                    'scriptPubKey': itx['vout'][vout]['scriptPubKey']['hex'],
                     'amount': itx['vout'][vout]['value']
                         }
                 if itx['vout'][vout]['scriptPubKey']['type'] == 'scripthash':
@@ -108,8 +120,14 @@ class BitcoinCli:
 
         return self._quote(json.dumps(signing_inputs))
 
-    def _implicit_fee(self, tx):
-        pass
+    def _implicit_fee(self, input_txs, vouts, address_amounts):
+        total_input = sum([decimal.Decimal(itx['vout'][vout]['value']) for vout in vouts[itx] for itx in inputs_txs])
+        total_output = sum([decimal.Decimal(v) for v in address_amounts.values()])
+        fee = total_input - total_output
+        print("total input:",total_input)
+        print("total output:",total_output)
+        print("implicit fee:", fee)
+        return total_input, total_output, fee
 
     def _create_hex_pk(self, *hex_seeds):
         hashes = [int(hashlib.sha256(seed.encode()).hexdigest(),16) for seed in hex_seeds] 
@@ -159,6 +177,3 @@ class BitcoinCli:
 class NamecoinCli(BitcoinCli):
     CLIBIN = 'namecoin-cli'
     WIFPREFIX = 'B4'
-
-class BitcoinCashCli(BitcoinCli):
-    pass
