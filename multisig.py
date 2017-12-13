@@ -29,23 +29,17 @@ class BitcoinCli:
             pass
         return results
 
-    def create_utx(self, funding_txs, vouts, address_amounts):
-        inputs = self._quote(json.dumps([{'txid':ftx['txid'],'vout':vouts[ftx['txid']]} for ftx in funding_txs]))
-        outputs = self._quote(json.dumps({address:amount for address,amount in address_amounts}))
-        utx = self('createrawtransaction', inputs, outputs)
-        return utx
+    def create_tx(self, input_txs, vouts, address_amounts):
+        inputs = self._tx_inputs(inputs_txs, vouts)
+        outputs = self._tx_outputs(address_amounts)
+        return self("createrawtransaction", inputs, outputs)
 
-    def sign_tx(self, tx, funding_txs, vouts, redeem_script, signing_pk):
+    def sign_tx(self, tx, input_txs, vouts, signing_pks, redeem_scripts):
 # does this need to be quoted?
-#        tx = self._quote(tx)
-        input_arg = self._quote(json.dumps([{
-                                 'txid':funding_tx['txid'],
-                                 'vout':vouts[funding_tx['txid']],
-                                 'scriptPubKey':funding_tx['vout'][vouts[funding_tx['txid']]]['scriptPubKey']['hex'],
-                                 'redeemScript':redeem_script} for funding_tx in funding_txs]))
-        pk_arg = self._quote(json.dumps([signing_pk]))
-        stx = self('signrawtransaction', tx, input_arg, pk_arg)
-        return stx
+        tx = self._quote(tx)
+        inputs = self._signing_inputs(input_txs, vouts, redeem_scripts)
+        pks = self._quote(json.dumps(signing_pks))
+        return self("signrawtransaction", tx, inputs, pks)
 
     def import_wif_pk(self, wif_pk, rescan='false'):
         self("importprivkey", wif_pk, self.account, rescan)
@@ -83,6 +77,39 @@ class BitcoinCli:
         for seed in hex_seeds:
             urand = binascii.hexlify(os.urandom(int(len(seed)/2))).decode()
             self.create_address(seed,urand)
+
+    def _tx_inputs(self, inputs_txs, vouts):
+        tx_inputs = [
+            {'txid':itx['txid'], 'vout': vout for vout in vouts[itx['txid']] for itx in input_txs} 
+                ]
+
+        return self._quote(json.dumps(tx_inputs))
+
+    def _tx_outputs(self, address_amounts):
+        return self._quote(json.dumps({address:amount for address,amount in address_amounts}))
+
+    def _signing_inputs(self, input_txs, vouts, redeem_scripts):
+        signing_inputs = []
+        for itx in input_txs:
+            for vout in vouts[itx['txid']]:
+                _input = {
+                    'txid': itx['txid'],
+                    'vout': vout,
+                    'scriptPubKey': itx['vout'][vout]['scriptPubKey']['hex']
+                    'amount': itx['vout'][vout]['value']
+                        }
+                if itx['vout'][vout]['scriptPubKey']['type'] == 'scripthash':
+                    try:
+                        _input['redeemScript'] = redeem_scripts[itx['txid']][vout]
+                    except ValueError:
+                        raise ValueError("input tx {} vout {} is scripthash but no redeem script provided".format(itx['txid'], vout))
+
+                signing_inputs.append(_input)
+
+        return self._quote(json.dumps(signing_inputs))
+
+    def _implicit_fee(self, tx):
+        pass
 
     def _create_hex_pk(self, *hex_seeds):
         hashes = [int(hashlib.sha256(seed.encode()).hexdigest(),16) for seed in hex_seeds] 
