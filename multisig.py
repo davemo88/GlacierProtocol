@@ -31,11 +31,11 @@ class BitcoinCli:
 
     def create_tx(self, input_txs, vouts, address_amounts):
         '''
-        inputs_txs: list of decoded txs
+        input_txs: list of decoded txs
         vouts: dict {txid: [vout indexes]}
         address_amount: dict of address: amount
         '''
-        inputs = self._tx_inputs(inputs_txs, vouts)
+        inputs = self._tx_inputs(input_txs, vouts)
         outputs = self._tx_outputs(address_amounts)
         _, __, ___ = self._implicit_fee(input_txs, vouts, address_amounts)
         print()
@@ -44,7 +44,7 @@ class BitcoinCli:
     def sign_tx(self, tx, input_txs, vouts, signing_pks, redeem_scripts={}):
         '''
         tx: hex tx
-        inputs_txs: list of decoded txs
+        input_txs: list of decoded txs
         vouts: dict {txid: [vout indexes]}
         signing_pks: list of wif pks
         redeem_scripts: dict {txid: {vout: redeem_script}}
@@ -92,13 +92,14 @@ class BitcoinCli:
 
     def _tx_inputs(self, input_txs, vouts):
         tx_inputs = [
-            {'txid':itx['txid'], 'vout': vout} for vout in vouts[itx['txid']] for itx in input_txs 
+#            {'txid':itx['txid'], 'vout': vout} for vout in vouts[itx['txid']] for itx in input_txs 
+            {'txid':itx['txid'], 'vout': vout} for itx in input_txs for vout in vouts[itx['txid']]
                 ]
 
         return self._quote(json.dumps(tx_inputs))
 
     def _tx_outputs(self, address_amounts):
-        return self._quote(json.dumps({address:amount for address,amount in address_amounts}))
+        return self._quote(json.dumps({address:amount for address,amount in address_amounts.items()}))
 
     def _signing_inputs(self, input_txs, vouts, redeem_scripts):
         signing_inputs = []
@@ -113,16 +114,16 @@ class BitcoinCli:
                 if itx['vout'][vout]['scriptPubKey']['type'] == 'scripthash':
                     try:
                         _input['redeemScript'] = redeem_scripts[itx['txid']][vout]
-                    except ValueError:
-                        raise ValueError("input tx {} vout {} is scripthash but no redeem script provided".format(itx['txid'], vout))
+                    except KeyError:
+                        raise KeyError("input tx {} vout {} is scripthash but no redeem script provided".format(itx['txid'], vout))
 
                 signing_inputs.append(_input)
 
         return self._quote(json.dumps(signing_inputs))
 
     def _implicit_fee(self, input_txs, vouts, address_amounts):
-        total_input = sum([decimal.Decimal(itx['vout'][vout]['value']) for vout in vouts[itx] for itx in inputs_txs])
-        total_output = sum([decimal.Decimal(v) for v in address_amounts.values()])
+        total_input = sum([decimal.Decimal(str(itx['vout'][vout]['value'])) for itx in input_txs for vout in vouts[itx['txid']]])
+        total_output = sum([decimal.Decimal(str(v)) for v in address_amounts.values()])
         fee = total_input - total_output
         print("total input:",total_input)
         print("total output:",total_output)
